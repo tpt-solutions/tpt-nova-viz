@@ -1,0 +1,26 @@
+# Rust
+/target/
+**/*.rs.bk
+Cargo.lock.bak
+
+# Editors / OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Local env / secrets
+.env
+.env.*
+
+# Claude Code local settings
+.claude/settings.local.json
+
+# Export / data artifacts
+*.las
+*.laz
+*.e57
+*.dcm
+*.nrrd
+*.mp4

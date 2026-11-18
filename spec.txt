@@ -1,0 +1,580 @@
+Design Spec 05 — tpt-nova-viz
+Project: tpt-nova-viz
+Role: Visualization-specific runtime extensions for tpt-nova
+Layer: Layer 5 (Domain Extension)
+License: MIT
+Dependency policy: No Apache-only dependencies
+Status: Draft v0.1
+Primary target: Linux-first, cross-platform by construction
+1. Summary
+tpt-nova-viz is the visualization domain extension for tpt-nova.
+While tpt-nova-games prioritizes real-time interactivity and tpt-nova-sim prioritizes determinism and sensor fidelity, tpt-nova-viz prioritizes precision, scale, and professional-grade data representation.
+It transforms tpt-nova into a high-performance visualization platform for engineering, architecture, scientific research, and industrial data analysis. This is where your work on tpt-cad and large-scale data rendering converges with the core engine.
+What It Provides
+Massive point cloud rendering (billions of points, LOD streaming).
+CAD/BIM file parsing and interactive visualization (STEP, IFC, OBJ, glTF).
+Precision measurement tools (distance, angle, area, volume).
+Annotation and markup systems (3D text, arrows, callouts).
+Volumetric data rendering (CT scans, fluid simulations, scientific datasets).
+High-accuracy camera controls (orbit, pan, zoom with sub-millimeter precision).
+Export to industry-standard formats (PDF, PNG, MP4, glTF).
+What It Does NOT Provide
+Real-time gameplay or player input (that's tpt-nova-games).
+Sensor simulation or AI training (that's tpt-nova-sim).
+The core rendering backend (that's tpt-nova core).
+The build pipeline (that's tpt-vectis).
+2. Naming Rule
+Every crate in the tpt-nova-viz workspace must start with:
+tpt-nova-viz-
+Except the root facade crate:
+tpt-nova-viz
+Valid examples:
+tpt-nova-viz
+tpt-nova-viz-pointcloud
+tpt-nova-viz-cad
+tpt-nova-viz-measure
+tpt-nova-viz-annotate
+tpt-nova-viz-volume
+tpt-nova-viz-camera
+tpt-nova-viz-export
+Invalid examples:
+nova-viz-pointcloud
+viz-measure
+tpt-visualization
+3. Architectural Position
+tpt-vectis (toolchain)
+  ↓ builds visualization assets/drivers for
+tpt-nova (core runtime)
+  ↓ extended by
+tpt-nova-viz (THIS REPO)
+  ↓ used by
+  CAD viewers, BIM platforms, scientific visualization tools, industrial inspection systems
+Dependency Direction
+tpt-nova-viz DEPENDS ON:
+  - tpt-nova (core ECS, scheduler, rendering abstraction)
+  - tpt-math (vectors, matrices, transforms, precision math)
+  - tpt-media (image codecs for export)
+
+tpt-nova-viz DOES NOT DEPEND ON:
+  - tpt-nova-games (sibling domain)
+  - tpt-nova-sim (sibling domain)
+  - tpt-vectis (build-time only)
+  - tpt-kinetix (physics not required for pure visualization)
+
+4. Core Subsystems
+4.1. tpt-nova-viz-pointcloud
+Massive point cloud rendering with LOD streaming.
+Components
+pub struct PointCloud {
+    pub source: PointCloudSource,
+    pub total_points: u64,
+    pub bounds: Aabb,
+    pub color_mode: ColorMode,
+    pub point_size: f32,
+    pub loaded_chunks: HashSet<ChunkId>,
+}
+
+pub enum PointCloudSource {
+    File { path: PathBuf, format: PointCloudFormat },
+    Stream { uri: String },
+    Generated { generator: Box<dyn PointGenerator> },
+}
+
+pub enum PointCloudFormat {
+    Las,
+    Laz,
+    Pts,
+    Xyz,
+    E57,
+}
+
+pub struct PointChunk {
+    pub id: ChunkId,
+    pub bounds: Aabb,
+    pub point_count: u32,
+    pub lod_level: u8,
+    pub gpu_buffer: Option<GpuBufferId>,
+}
+
+pub enum ColorMode {
+    Uniform(Color),
+    ByHeight { min: Color, max: Color },
+    ByIntensity,
+    ByClassification,
+    ByRgb,
+}
+
+Systems
+pointcloud_stream_system — asynchronously loads chunks based on camera distance and frustum.
+pointcloud_lod_system — selects appropriate LOD level per chunk based on screen-space error.
+pointcloud_render_system — batches and renders visible chunks with instanced point sprites.
+pointcloud_cleanup_system — unloads distant chunks to manage GPU memory.
+Drivers
+pointcloud_loader_driver — hot-swappable file format parser (LAS, LAZ, E57, custom).
+pointcloud_lod_driver — hot-swappable LOD selection algorithm (quadtree, octree, k-d tree).
+pointcloud_render_driver — hot-swappable rendering technique (point sprites, splatting, raycasting).
+Features
+Out-of-core rendering (datasets larger than RAM).
+Multi-resolution LOD with seamless transitions.
+Frustum culling and occlusion culling.
+GPU memory budget management.
+Color mapping by elevation, intensity, classification, or RGB.
+Point size attenuation based on distance.
+4.2. tpt-nova-viz-cad
+CAD/BIM file parsing and interactive visualization.
+Components
+pub struct CadModel {
+    pub source: CadSource,
+    pub meshes: Vec<CadMesh>,
+    pub materials: Vec<CadMaterial>,
+    pub metadata: CadMetadata,
+    pub bounds: Aabb,
+}
+
+pub enum CadSource {
+    Step { path: PathBuf },
+    Ifc { path: PathBuf },
+    Obj { path: PathBuf },
+    Gltf { path: PathBuf },
+    Stl { path: PathBuf },
+}
+
+pub struct CadMesh {
+    pub vertices: Vec<Vec3>,
+    pub normals: Vec<Vec3>,
+    pub indices: Vec<u32>,
+    pub material_index: usize,
+    pub transform: Mat4,
+}
+
+pub struct CadMaterial {
+    pub name: String,
+    pub diffuse: Color,
+    pub specular: Color,
+    pub roughness: f32,
+    pub metallic: f32,
+}
+
+pub struct CadMetadata {
+    pub author: Option<String>,
+    pub created: Option<DateTime<Utc>>,
+    pub units: CadUnits,
+    pub properties: HashMap<String, String>,
+}
+
+pub enum CadUnits {
+    Millimeters,
+    Centimeters,
+    Meters,
+    Inches,
+    Feet,
+}
+
+Systems
+cad_parse_system — asynchronously parses CAD files into mesh representations.
+cad_render_system — renders CAD meshes with PBR materials.
+cad_select_system — handles picking and selection of individual parts/assemblies.
+cad_explode_system — animates exploded view transitions.
+Drivers
+cad_parser_driver — hot-swappable file format parser (STEP, IFC, OBJ, glTF, STL).
+cad_material_driver — hot-swappable material model (Phong, PBR, custom).
+cad_tessellation_driver — hot-swappable mesh generation from B-rep (for STEP/IGES).
+Features
+Support for industry-standard CAD formats (STEP, IFC, OBJ, glTF, STL).
+Hierarchical assembly structure (parts, sub-assemblies).
+Part selection and isolation.
+Exploded view animation.
+Cross-section cutting planes.
+Metadata extraction (author, units, properties).
+4.3. tpt-nova-viz-measure
+Precision measurement and analysis tools.
+Components
+pub struct Measurement {
+    pub kind: MeasurementKind,
+    pub points: Vec<Vec3>,
+    pub value: f64,
+    pub unit: MeasurementUnit,
+    pub visible: bool,
+    pub label: String,
+}
+
+pub enum MeasurementKind {
+    Distance,
+    Angle,
+    Area,
+    Volume,
+    Radius,
+    Diameter,
+}
+
+pub enum MeasurementUnit {
+    Millimeters,
+    Centimeters,
+    Meters,
+    Kilometers,
+    Inches,
+    Feet,
+    Degrees,
+    Radians,
+    SquareMeters,
+    CubicMeters,
+}
+
+pub struct MeasurementTool {
+    pub active: bool,
+    pub mode: MeasurementKind,
+    pub snap_to_surface: bool,
+    pub precision: u32, // decimal places
+}
+
+Systems
+measurement_update_system — recalculates measurement values when points change.
+measurement_render_system — renders measurement lines, arcs, and labels.
+measurement_input_system — handles point placement via mouse/touch input.
+Drivers
+measurement_calc_driver — hot-swappable calculation logic (geodesic vs. Euclidean distance, etc.).
+measurement_render_driver — hot-swappable visualization style (arrows, lines, dashed, etc.).
+Features
+Point-to-point distance measurement.
+Angle measurement (3-point or 2-line).
+Area measurement (polygon selection).
+Volume measurement (closed mesh selection).
+Snap-to-surface for precision.
+Real-time calculation as points are placed.
+Measurement history and export.
+4.4. tpt-nova-viz-annotate
+3D annotation and markup systems.
+Components
+pub struct Annotation {
+    pub id: AnnotationId,
+    pub kind: AnnotationKind,
+    pub position: Vec3,
+    pub text: String,
+    pub style: AnnotationStyle,
+    pub visible: bool,
+    pub locked: bool,
+}
+
+pub enum AnnotationKind {
+    Text { billboard: bool },
+    Arrow { target: Vec3 },
+    Callout { target: Vec3, line_style: LineStyle },
+    Cloud { points: Vec<Vec3> },
+    Polyline { points: Vec<Vec3> },
+}
+
+pub struct AnnotationStyle {
+    pub color: Color,
+    pub font_size: f32,
+    pub line_width: f32,
+    pub opacity: f32,
+}
+
+pub struct AnnotationLayer {
+    pub name: String,
+    pub annotations: Vec<AnnotationId>,
+    pub visible: bool,
+    pub locked: bool,
+}
+
+Systems
+annotation_render_system — renders annotations with billboarding and depth testing.
+annotation_input_system — handles annotation creation, editing, and deletion.
+annotation_layer_system — manages layer visibility and locking.
+Drivers
+annotation_render_driver — hot-swappable rendering technique (text atlas, SDF, vector).
+annotation_layout_driver — hot-swappable text layout and wrapping logic.
+Features
+3D text annotations with billboarding.
+Arrows and callout lines.
+Point clouds and polylines for markup.
+Layer-based organization.
+Annotation locking to prevent accidental edits.
+Export annotations to JSON/XML.
+4.5. tpt-nova-viz-volume
+Volumetric data rendering (medical, scientific, simulation).
+Components
+pub struct VolumeData {
+    pub dimensions: UVec3,
+    pub voxel_size: Vec3,
+    pub data: VolumeDataSource,
+    pub transfer_function: TransferFunction,
+    pub sampling_rate: f32,
+}
+
+pub enum VolumeDataSource {
+    Raw { path: PathBuf, format: VolumeFormat },
+    Dicom { path: PathBuf },
+    Nrrd { path: PathBuf },
+    Generated { generator: Box<dyn VolumeGenerator> },
+}
+
+pub enum VolumeFormat {
+    Raw8,
+    Raw16,
+    Float32,
+}
+
+pub struct TransferFunction {
+    pub control_points: Vec<TransferControlPoint>,
+    pub opacity_curve: Curve,
+}
+
+pub struct TransferControlPoint {
+    pub value: f32,
+    pub color: Color,
+}
+
+Systems
+volume_upload_system — uploads volume data to 3D texture.
+volume_render_system — raycasts through volume with transfer function.
+volume_isosurface_system — extracts isosurfaces via marching cubes (optional).
+Drivers
+volume_loader_driver — hot-swappable file format parser (DICOM, NRRD, raw).
+volume_render_driver — hot-swappable rendering technique (raycasting, splatting, isosurface).
+volume_transfer_driver — hot-swappable transfer function evaluation.
+Features
+Direct volume rendering (DVR) with transfer functions.
+Isosurface extraction (marching cubes).
+Multi-slice visualization (axial, coronal, sagittal).
+Window/level adjustment for medical imaging.
+Clipping planes for interactive exploration.
+Support for DICOM, NRRD, and raw formats.
+4.6. tpt-nova-viz-camera
+Precision camera controls for visualization.
+Components
+pub struct VizCamera {
+    pub mode: VizCameraMode,
+    pub target: Vec3,
+    pub distance: f64,
+    pub yaw: f64,
+    pub pitch: f64,
+    pub near: f64,
+    pub far: f64,
+    pub fov: f64,
+    pub ortho_scale: f64,
+}
+
+pub enum VizCameraMode {
+    Orbit,
+    Pan,
+    Zoom,
+    Fly,
+    Walk,
+    Orthographic,
+}
+
+pub struct CameraConstraints {
+    pub min_distance: f64,
+    pub max_distance: f64,
+    pub min_pitch: f64,
+    pub max_pitch: f64,
+    pub allow_roll: bool,
+}
+
+Systems
+viz_camera_update_system — updates camera transform from orbit/pan/zoom parameters.
+viz_camera_input_system — handles mouse/touch/keyboard input for camera control.
+viz_camera_fit_system — fits camera to bounds (zoom to fit, frame selection).
+Drivers
+viz_camera_control_driver — hot-swappable camera control logic (orbit, fly, walk).
+viz_camera_projection_driver — hot-swappable projection logic (perspective, orthographic, fisheye).
+Features
+Orbit camera with target point.
+Smooth pan and zoom.
+Fly-through mode for walkthroughs.
+Orthographic projection for technical views.
+Zoom-to-fit and frame-selection.
+Camera constraints (min/max distance, pitch limits).
+Sub-millimeter precision for engineering applications.
+4.7. tpt-nova-viz-export
+Export to industry-standard formats.
+Components
+pub struct ExportJob {
+    pub format: ExportFormat,
+    pub output_path: PathBuf,
+    pub settings: ExportSettings,
+    pub status: ExportStatus,
+    pub progress: f32,
+}
+
+pub enum ExportFormat {
+    Png { width: u32, height: u32 },
+    Jpeg { width: u32, height: u32, quality: u8 },
+    Pdf { page_size: PageSize },
+    Mp4 { width: u32, height: u32, fps: u32, bitrate: u32 },
+    Gltf { binary: bool },
+    Obj,
+    Stl,
+}
+
+pub enum ExportStatus {
+    Pending,
+    InProgress,
+    Complete,
+    Failed { error: String },
+}
+
+Systems
+export_capture_system — captures framebuffer or render pass.
+export_encode_system — encodes captured data to target format.
+export_progress_system — tracks and reports export progress.
+Drivers
+export_encoder_driver — hot-swappable encoding backend (PNG, JPEG, PDF, MP4).
+export_scene_driver — hot-swappable scene serialization (glTF, OBJ, STL).
+Features
+High-resolution screenshot export (PNG, JPEG).
+Vector PDF export for technical drawings.
+Video capture (MP4) for animations.
+Scene export to glTF/OBJ/STL for use in other tools.
+Background export without blocking the UI.
+Progress reporting and cancellation.
+5. Integration with tpt-nova-drivers
+The visualization domain leverages dynamic drivers for format flexibility and rendering experimentation.
+Example: Hot-Swapping a Point Cloud Loader
+// Default: Slow but memory-efficient streaming loader
+pub struct StreamingPointcloudDriver;
+impl Driver for StreamingPointcloudDriver { /* ... */ }
+
+// Upgraded: Fast bulk loader for datasets that fit in RAM
+pub struct BulkPointcloudDriver;
+impl Driver for BulkPointcloudDriver { /* ... */ }
+
+// At runtime, switch based on dataset size:
+if dataset_size < RAM_BUDGET {
+    world.swap_driver::<PointCloud>(BulkPointcloudDriver);
+} else {
+    world.swap_driver::<PointCloud>(StreamingPointcloudDriver);
+}
+
+Example: Self-Debugging a Measurement
+If a measurement tool reports incorrect distances, tpt-nova-drivers + tpt-eve can:
+Detect the anomaly (distance doesn't match expected value).
+Analyze the calculation driver.
+Generate a corrected driver (e.g., fixing unit conversion bug).
+Hot-swap it immediately.
+6. Domain Manifest
+tpt-nova-viz provides its own Vectis domain manifest:
+# vectis-domain.toml
+
+[domain]
+name = "viz"
+crate = "tpt-nova-viz"
+version = "0.1.0"
+
+[schemas]
+components = "schemas/components.nova.json"
+events = "schemas/events.nova.json"
+
+[drivers]
+directory = "drivers"
+
+[assets]
+importers = ["pointcloud", "cad", "volume", "dicom", "nrrd"]
+
+[compatibility]
+nova = ">=0.4.0,<0.6.0"
+
+7. Strict Dependency Policy
+License: MIT only
+Allowed: MIT, BSD-2-Clause, BSD-3-Clause, ISC, Zlib, BSL-1.0
+Banned: Apache-2.0 (unless dual-licensed with MIT), GPL-, AGPL-, LGPL-, MPL-, SSPL
+Specific Crate Choices
+Point cloud formats (LAS/LAZ): las-rs (MIT) or custom parser.
+CAD formats (STEP/IGES): Custom lightweight parser or step-parser (if MIT-licensed).
+Image codecs (PNG/JPEG): image crate (MIT) or tpt-media.
+PDF export: printpdf (MIT) or custom vector renderer.
+Video encoding: ffmpeg bindings are GPL, so we must use a pure Rust MIT-licensed encoder or shell out to ffmpeg as an external tool (not a dependency).
+DICOM parsing: dicom crate (MIT/Apache-2.0, use MIT) or custom parser.
+Critical: Avoid the Apache-2.0 trap in scientific data libraries. Many data format parsers are Apache-2.0 only. For v0.1, we will implement custom parsers for critical formats or explicitly audit for MIT compatibility.
+8. Progress Tracking (todo.md)
+# tpt-nova-viz Progress
+
+## [ ] Layer 1: Point Cloud Foundation
+- [ ] `PointCloud` and `PointChunk` components.
+- [ ] Basic LAS file parser (MIT-licensed).
+- [ ] Out-of-core streaming system.
+- [ ] LOD selection and rendering.
+
+## [ ] Layer 2: CAD Visualization
+- [ ] `CadModel` and `CadMesh` components.
+- [ ] OBJ/glTF parser (MIT-licensed).
+- [ ] Hierarchical assembly rendering.
+- [ ] Part selection and isolation.
+
+## [ ] Layer 3: Measurement Tools
+- [ ] `Measurement` component and kinds.
+- [ ] Distance and angle calculation.
+- [ ] Measurement rendering (lines, labels).
+- [ ] Snap-to-surface input handling.
+
+## [ ] Layer 4: Annotation System
+- [ ] `Annotation` and `AnnotationLayer` components.
+- [ ] 3D text rendering with billboarding.
+- [ ] Arrow and callout rendering.
+- [ ] Layer management.
+
+## [ ] Layer 5: Volumetric Rendering
+- [ ] `VolumeData` component.
+- [ ] 3D texture upload system.
+- [ ] Raycasting volume renderer.
+- [ ] Transfer function UI.
+
+## [ ] Layer 6: Precision Camera
+- [ ] `VizCamera` component with orbit/pan/zoom.
+- [ ] Sub-millimeter precision math.
+- [ ] Zoom-to-fit and frame-selection.
+- [ ] Camera constraints.
+
+## [ ] Layer 7: Export System
+- [ ] `ExportJob` component.
+- [ ] PNG/JPEG screenshot export.
+- [ ] PDF vector export.
+- [ ] glTF scene export.
+
+9. Success Criteria
+tpt-nova-viz is successful when:
+A 10-billion-point LiDAR dataset can be loaded and navigated at 30+ FPS on a mid-range GPU.
+A STEP file can be parsed and rendered with correct materials and hierarchy.
+A distance measurement between two points on a CAD model is accurate to 0.01mm.
+A 3D annotation can be placed, edited, and exported to JSON.
+A DICOM CT scan can be rendered with interactive transfer function adjustment.
+The camera can orbit, pan, and zoom with sub-millimeter precision.
+A high-resolution PNG export completes without blocking the UI.
+The entire crate dependency tree passes the strict no-Apache-only cargo-deny check.
+10. Non-Goals for v0.1
+Photorealistic rendering (that's a core tpt-nova rendering concern; viz focuses on accuracy, not beauty).
+Real-time collaboration (multi-user editing is a future feature).
+Full STEP/IGES B-rep tessellation (v0.1 focuses on mesh-based CAD like OBJ/glTF; B-rep support is v0.2).
+Native mobile support (v0.1 targets desktop Linux/Windows/macOS).
+Integration with proprietary CAD kernels (Parasolid, ACIS).
+11. Example Use Cases
+Use Case 1: LiDAR Inspection
+A civil engineer loads a 50-billion-point terrestrial LiDAR scan of a bridge. They:
+Navigate the point cloud at 60 FPS using the orbit camera.
+Measure crack widths with sub-millimeter precision.
+Annotate defects with 3D callouts.
+Export annotated views to PDF for the inspection report.
+Use Case 2: BIM Coordination
+An architect loads an IFC model of a building. They:
+Isolate the HVAC system to check for clashes.
+Measure clearance distances between ducts and beams.
+Annotate coordination issues.
+Export a 3D PDF to share with the structural engineer.
+Use Case 3: Medical Imaging
+A radiologist loads a DICOM CT scan. They:
+Adjust the transfer function to highlight bone vs. soft tissue.
+Take orthogonal slices (axial, coronal, sagittal).
+Measure tumor volume.
+Export a video flythrough for the surgical team.
+Next Steps
+We have now completed the full Layer 5 domain extension triad:
+tpt-nova-games (interactive entertainment)
+tpt-nova-sim (deterministic simulation)
+tpt-nova-viz (precision visualization)
+The ecosystem is now architecturally complete:
+Layer 3: tpt-vectis (toolchain/factory)
+Layer 4: tpt-nova + tpt-nova-drivers (core runtime with dynamic behavior)
+Layer 5: tpt-nova-games, tpt-nova-sim, tpt-nova-viz (domain extensions)
+
+
